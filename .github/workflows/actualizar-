@@ -1,0 +1,32 @@
+name: Actualizar datos
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Descargar CSV publicado de Hoja1
+        run: |
+          curl -sSfL "https://docs.google.com/spreadsheets/d/e/2PACX-1vQdEGwEIqL4Jkh6fPKursBb_9zr-IZPI9cqoahYxwJSrZCnJLMMqM_LII_Y6z979IRdfhz13AdN_a0H/pub?gid=728351916&single=true&output=csv" -o datos.csv
+
+      - name: Guardar cambios si los hay
+        run: |
+          git config user.name "actualizador-cronograma"
+          git config user.email "actions@users.noreply.github.com"
+          git add datos.csv
+          if git diff --cached --quiet; then
+            echo "Sin cambios"
+          else
+            git commit -m "Actualizar datos del cronograma"
+            git push
+          fi
