@@ -268,7 +268,7 @@
 
   function load() {
     var btn = document.getElementById('btn');
-    if (!CONFIG.CSV_URL || CONFIG.CSV_URL.indexOf('PEGAR_AQUI') === 0) {
+    if (!CONFIG.CSV_URL || CONFIG.CSV_URL.indexOf('https://docs.google.com/spreadsheets/d/e/2PACX-1vQdEGwEIqL4Jkh6fPKursBb_9zr-IZPI9cqoahYxwJSrZCnJLMMqM_LII_Y6z979IRdfhz13AdN_a0H/pub?output=csv') === 0) {
       setErr('Falta configurar el enlace CSV publicado de Hoja1 en index.html.');
       return;
     }
