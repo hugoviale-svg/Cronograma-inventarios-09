@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cronograma de recuentos</title>
+<style>
+  :root { --bg:#f5f6fa; --card:#ffffff; --ink:#1d2433; --muted:#667085; --line:#e4e7ec; --wk:#f7f8fb; --hoy:#fff6d1; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#0f1420; --card:#171d2b; --ink:#e8ecf4; --muted:#98a2b3; --line:#2a3245; --wk:#1b2233; --hoy:#3a3320; }
+  }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between; padding:16px; }
+  h1 { font-size:20px; margin:0; }
+  .meta { color:var(--muted); font-size:12px; margin-top:2px; }
+  button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:default; }
+  .kpis { display:flex; flex-wrap:wrap; gap:8px; padding:0 16px 8px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 12px; min-width:120px; }
+  .kpi b { display:block; font-size:18px; }
+  .kpi span { color:var(--muted); font-size:12px; }
+  .legend { display:flex; flex-wrap:wrap; gap:6px; padding:4px 16px 12px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; font-size:12px; background:var(--card); border:1px solid var(--line); border-radius:999px; padding:3px 10px 3px 4px; }
+  .sw { width:14px; height:14px; border-radius:4px; display:inline-block; }
+  .err { color:#b42318; padding:0 16px 8px; }
+  .wrap { margin:0 16px 24px; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:auto; max-height:75vh; }
+  table { border-collapse:separate; border-spacing:0; }
+  th, td { border-bottom:1px solid var(--line); border-right:1px solid var(--line); height:32px; min-width:34px; padding:0; text-align:center; font-size:12px; }
+  thead th { position:sticky; top:0; z-index:2; background:var(--card); color:var(--muted); font-weight:600; }
+  thead th small { display:block; font-weight:400; font-size:10px; }
+  th.lbl, td.lbl { position:sticky; left:0; z-index:1; background:var(--card); text-align:left; min-width:240px; max-width:320px; padding:4px 10px; }
+  thead th.lbl { z-index:3; }
+  td.wk { background:var(--wk); }
+  td.hoy { background:var(--hoy); }
+  tr.grupo th.lbl { font-weight:700; }
+  .name { font-weight:600; font-size:12.5px; white-space:normal; }
+  .rango { color:var(--muted); font-size:11px; }
+  .bar { display:block; height:20px; margin:5px 2px; border-radius:6px; }
+  .empty { padding:24px; color:var(--muted); text-align:left; }
+  @media (max-width:600px) {
+    .wrap { margin:0 12px 20px; }
+    header, .kpis, .legend, .err { padding-left:12px; padding-right:12px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="titulo">Cronograma de recuentos</h1>
+    <div class="meta" id="meta">Cargando…</div>
+  </div>
+  <button id="btn" type="button">Actualizar</button>
+</header>
+<div class="kpis" id="kpis"></div>
+<div class="legend" id="legend"></div>
+<div class="err" id="err"></div>
+<div class="wrap"><table id="grid"></table></div>
+
+<script>
+  // === CONFIGURACIÓN ===
+  // Enlace "Publicar en la web" de Hoja1, en formato CSV (termina en output=csv).
+  var CONFIG = {
+    CSV_URL: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQdEGwEIqL4Jkh6fPKursBb_9zr-IZPI9cqoahYxwJSrZCnJLMMqM_LII_Y6z979IRdfhz13AdN_a0H/pub?gid=728351916&single=true&output=csv',
+    REFRESH_SECONDS: 120
+  };
+
+  var MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  var DIAS_LARGOS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  var DIAS_CORTOS = ['Do','Lu','Ma','Mi','Ju','Vi','Sa'];
+  var PALETA = ['#6d28d9','#14b8a6','#f59e0b','#06b6d4','#e11d74','#84cc16','#f97316','#3b82f6'];
+
+  // ---------- Lectura del CSV ----------
+  function parseCSV(text) {
+    var rows = [], row = [], field = '', inQ = false, i = 0;
+    text = text.replace(/^﻿/, '');
+    while (i < text.length) {
+      var ch = text[i];
+      if (inQ) {
+        if (ch === '"' && text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        if (ch === '"') { inQ = false; i++; continue; }
+        field += ch; i++; continue;
+      }
+      if (ch === '"') { inQ = true; i++; continue; }
+      if (ch === ',') { row.push(field); field = ''; i++; continue; }
+      if (ch === '\r') { i++; continue; }
+      if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
+      field += ch; i++;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  // Convierte la fecha tal como la muestra la publicación (dd/mm/aaaa o aaaa-mm-dd) a aaaa-mm-dd.
+  function fechaISO(s) {
+    s = (s || '').trim();
+    var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return m[1] + '-' + pad(m[2]) + '-' + pad(m[3]);
+    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) return m[3] + '-' + pad(m[2]) + '-' + pad(m[1]);
+    return null;
+  }
+  function pad(n) { return ('0' + n).slice(-2); }
+
+  function limpia(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
+  function rango(it) {
+    if (it.desde && it.hasta && it.desde !== it.hasta) return it.desde + ' – ' + it.hasta;
+    return it.desde || '';
+  }
+
+  // ---------- Modelo (misma lógica que Code.gs) ----------
+  function buildModel(values, hoy, actualizado) {
+    var esEnc = function (s) { return /^(desde )?estructura$/i.test(s); };
+    var bloques = [], actual = null, titulo = '';
+
+    values.forEach(function (row, i) {
+      var a = limpia(row[0]), b = limpia(row[1]), c = limpia(row[2]);
+      if (!titulo && i < 6 && /(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/i.test(row.join(' '))) {
+        titulo = limpia(row.filter(function (x) { return x; }).join(' '));
+      }
+      if (esEnc(a)) {
+        actual = { fecha: fechaISO(row[3]), items: [] };
+        bloques.push(actual);
+        return;
+      }
+      if (!actual || !c) return;
+      actual.items.push({ desde: a, hasta: b, nombre: c });
+    });
+
+    var txt = titulo.toLowerCase();
+    var mesIdx = MESES.findIndex(function (m) { return txt.indexOf(m) >= 0; });
+    var anio = (txt.match(/\b(20\d{2})\b/) || [])[1];
+    var ym = null;
+    if (mesIdx >= 0 && anio) ym = anio + '-' + pad(mesIdx + 1);
+    else { var primera = bloques.find(function (b) { return b.fecha; }); ym = primera ? primera.fecha.slice(0, 7) : null; }
+
+    var dias = [], Y = 0, M = 0;
+    if (ym) {
+      Y = Number(ym.slice(0, 4)); M = Number(ym.slice(5, 7));
+      var nDias = new Date(Date.UTC(Y, M, 0)).getUTCDate();
+      for (var n = 1; n <= nDias; n++) {
+        var dow = new Date(Date.UTC(Y, M - 1, n)).getUTCDay();
+        dias.push({ iso: ym + '-' + pad(n), n: n, dow: DIAS_CORTOS[dow], fin: dow === 0 || dow === 6 });
+      }
+    }
+
+    var grupos = [], total = 0, sinFecha = 0, fueraMes = 0;
+    bloques.forEach(function (bl) {
+      if (!bl.items.length) return;
+      if (!bl.fecha) { sinFecha += bl.items.length; return; }
+      if (!ym || bl.fecha.indexOf(ym) !== 0) { fueraMes += bl.items.length; return; }
+      var n = Number(bl.fecha.slice(8, 10));
+      var d = new Date(Date.UTC(Y, M - 1, n)).getUTCDay();
+      total += bl.items.length;
+      grupos.push({
+        fecha: bl.fecha, diaNombre: DIAS_LARGOS[d], diaNum: n,
+        color: PALETA[(n - 1) % PALETA.length],
+        items: bl.items.map(function (it) { return { nombre: it.nombre, rango: rango(it) }; })
+      });
+    });
+    grupos.sort(function (x, y) { return x.fecha < y.fecha ? -1 : x.fecha > y.fecha ? 1 : 0; });
+
+    return {
+      titulo: titulo || 'Cronograma de recuentos',
+      mes: ym ? MESES[M - 1].charAt(0).toUpperCase() + MESES[M - 1].slice(1) + ' ' + Y : '',
+      hoy: hoy, actualizado: actualizado, dias: dias, grupos: grupos,
+      totalActividades: total, sinFecha: sinFecha, fueraMes: fueraMes
+    };
+  }
+
+  // ---------- Página ----------
+  function el(tag, attrs, text) {
+    var e = document.createElement(tag);
+    if (attrs) for (var k in attrs) { if (attrs[k] !== '' && attrs[k] != null) e.setAttribute(k, attrs[k]); }
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function clsDia(d, m) {
+    var c = [];
+    if (d.fin) c.push('wk');
+    if (d.iso === m.hoy) c.push('hoy');
+    return c.join(' ');
+  }
+  function ahora() {
+    var d = new Date(), p = pad;
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function hoyISO() {
+    var d = new Date();
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  function render(m) {
+    document.getElementById('titulo').textContent = m.titulo;
+    document.getElementById('meta').textContent = (m.mes ? m.mes + ' · ' : '') + 'Actualizado ' + m.actualizado;
+
+    var kpis = document.getElementById('kpis');
+    kpis.innerHTML = '';
+    [[m.totalActividades, 'actividades'], [m.grupos.length, 'días con recuento'],
+     [m.sinFecha, 'sin fecha (omitidas)'], [m.fueraMes, 'de otro mes (omitidas)']].forEach(function (k) {
+      var box = el('div', { 'class': 'kpi' });
+      box.appendChild(el('b', null, String(k[0])));
+      box.appendChild(el('span', null, k[1]));
+      kpis.appendChild(box);
+    });
+
+    var legend = document.getElementById('legend');
+    legend.innerHTML = '';
+    m.grupos.forEach(function (g) {
+      var chip = el('span', { 'class': 'chip' });
+      var sw = el('span', { 'class': 'sw' });
+      sw.style.background = g.color;
+      chip.appendChild(sw);
+      chip.appendChild(document.createTextNode(g.diaNombre + ' ' + g.diaNum + ' (' + g.items.length + ')'));
+      legend.appendChild(chip);
+    });
+
+    var table = document.getElementById('grid');
+    table.innerHTML = '';
+    if (!m.dias.length || !m.grupos.length) {
+      var fila = el('tr');
+      fila.appendChild(el('td', { 'class': 'empty' }, 'No hay actividades con fecha para mostrar.'));
+      table.appendChild(fila);
+      return;
+    }
+
+    var thead = el('thead'), hr = el('tr');
+    hr.appendChild(el('th', { 'class': 'lbl' }, 'Actividad'));
+    m.dias.forEach(function (d) {
+      var th = el('th', { 'class': clsDia(d, m), title: d.iso });
+      th.appendChild(document.createTextNode(d.n));
+      th.appendChild(el('small', null, d.dow));
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    var tbody = el('tbody');
+    m.grupos.forEach(function (g) {
+      var gr = el('tr', { 'class': 'grupo' });
+      var lab = el('th', { 'class': 'lbl' });
+      lab.style.borderLeft = '6px solid ' + g.color;
+      lab.appendChild(el('div', { 'class': 'name' }, g.diaNombre + ' ' + g.diaNum + ' · ' + g.items.length + ' actividades'));
+      gr.appendChild(lab);
+      m.dias.forEach(function (d) { gr.appendChild(el('td', { 'class': clsDia(d, m) })); });
+      tbody.appendChild(gr);
+
+      g.items.forEach(function (it) {
+        var tr = el('tr'), l = el('td', { 'class': 'lbl' });
+        l.appendChild(el('div', { 'class': 'name' }, it.nombre));
+        if (it.rango) l.appendChild(el('div', { 'class': 'rango' }, it.rango));
+        tr.appendChild(l);
+        m.dias.forEach(function (d) {
+          var td = el('td', { 'class': clsDia(d, m) });
+          if (d.iso === g.fecha) {
+            var bar = el('span', { 'class': 'bar', title: it.nombre + ' · ' + g.diaNombre + ' ' + g.diaNum });
+            bar.style.background = g.color;
+            td.appendChild(bar);
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    });
+    table.appendChild(tbody);
+  }
+
+  function setErr(msg) { document.getElementById('err').textContent = msg || ''; }
+
+  function load() {
+    var btn = document.getElementById('btn');
+    if (!CONFIG.CSV_URL || CONFIG.CSV_URL.indexOf('PEGAR_AQUI') === 0) {
+      setErr('Falta configurar el enlace CSV publicado de Hoja1 en index.html.');
+      return;
+    }
+    btn.disabled = true;
+    // El parámetro t evita que el navegador devuelva una copia vieja.
+    var url = CONFIG.CSV_URL + (CONFIG.CSV_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+    fetch(url, { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function (text) {
+        var m = buildModel(parseCSV(text), hoyISO(), ahora());
+        render(m);
+        setErr('');
+      })
+      .catch(function (e) { setErr('No se pudo actualizar: ' + e.message); })
+      .then(function () { btn.disabled = false; });
+  }
+
+  document.getElementById('btn').addEventListener('click', load);
+  load();
+  setInterval(load, CONFIG.REFRESH_SECONDS * 1000);
+</script>
+</body>
+</html>
